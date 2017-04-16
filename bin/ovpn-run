@@ -1,0 +1,58 @@
+#!/bin/sh
+set -e
+
+if [ -z "$OPENVPN" ]; then
+  echo "Error: \$OPENVPN isn't set."
+  echo "Exiting..."
+  exit 1
+fi
+
+# Create /dev/net/tun for creating tun/tap devices
+mkdir -p /dev/net
+test -c /dev/net/tun || mknod /dev/net/tun c 10 200
+
+option() {
+  sed -n "s/$1 //p" ${CONFIG_FILE} | xargs
+}
+tolower() {
+  tr '[:upper:]' '[:lower:]'
+}
+tuntap_type() {
+  case "$1" in
+    tun|tap) echo $1;;
+    *)case "$2" in
+        tun|tap) echo $2;;
+        *)echo "Error: Cannot determine TUN/TAP device type."
+          echo "This is probably a bug and you should file a bug report:"
+          echo "  https://github.com/frebib/docker-openvpn/issues"
+          return 1;;
+      esac
+  esac
+}
+
+# Determine tun/tap device name & type 
+conf_dev="$(option dev | tolower)"
+conf_type="$(option dev-type | tolower)"
+TUNTAP_TYPE=$(tuntap_type "${conf_dev:0:3}" "${conf_type}")
+
+case "${TUNTAP_TYPE}" in
+  tun)
+    if [ -z "${TUN_GATEWAY}" ]; then
+      echo "Error: A gateway must be provided when running in TAP mode"
+      echo "Please specify a gateway with '-e TUN_GATEWAY=192.168.10.1'"
+      exit 3
+    fi
+    # Convert mask to cidr: x.x.x.x x.x.x.x to x.x.x.x/xx
+    SRV_ADDR_MASK="$(option server)"
+    eval $(ipcalc -p $SRV_ADDR_MASK)
+    SRV_NET="$(echo $SRV_ADDR_MASK | cut -d " " -f1)/$PREFIX"
+    UPDOWN_ARGS="${TUN_GATEWAY} ${SRV_NET} ${TUNTAP_ETH}";;
+
+  tap)
+    UPDOWN_ARGS="${TAP_BRIDGE} ${TUNTAP_ETH}";;
+esac
+
+UP_SCRIPT="/usr/local/bin/up-${TUNTAP_TYPE}.sh $UPDOWN_ARGS"
+
+exec openvpn --up "${UP_SCRIPT}" --script-security 2 --config "${CONFIG_FILE}"
+# vim: sw=2 ft=sh
