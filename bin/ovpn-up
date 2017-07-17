@@ -1,0 +1,52 @@
+#!/bin/sh
+set -e
+
+opts=$(getopt -o 'b:' -- "$@")
+eval set -- "$opts"
+while true; do
+    case "$1" in
+        # Bridge device for TAP
+        -b) bridge=${2}
+            shift 2 ;;
+        --) shift ; break ;;
+        *) echo "Error parsing arguments"; exit 1 ;;
+    esac
+done
+
+eth=$1
+
+case ${dev_type} in
+    tun)
+        table=vpn
+
+        # Calculate routed subnet
+        eval $(ipcalc -np $ifconfig_local $ifconfig_netmask) # returns NETWORK=..\nPREFIX=xx
+        srv_net="$NETWORK/$PREFIX"
+        gateway=$route_gateway_1
+
+        # Route packets using iproute
+        echo 1 > /proc/sys/net/ipv4/conf/${eth}/proxy_arp
+        # Create routing table if it doesn't exist
+        if ! grep -q "1\t${table}" /etc/iproute2/rt_tables; then
+            echo -e "1\t${table}" >> /etc/iproute2/rt_tables
+            ip route flush table ${table}
+        fi
+        ip rule add dev ${dev} table ${table}
+        ip rule add dev ${eth} table ${table}
+        ip route add ${srv_net} dev ${dev} table ${table}
+        ip route add ${gateway}/32 dev ${eth} table ${table}
+        ip route add default via ${gateway} dev ${eth} table ${table}
+        ;;
+
+    tap)
+        # Add bridge if it doesn't exist
+        if ! brctl show ${bridge} &>/dev/null; then
+            brctl addbr ${bridge}
+        fi
+        brctl addif ${bridge} ${eth}
+        brctl addif ${bridge} ${dev}
+        ip addr flush dev ${eth}
+        ip link set ${bridge} up
+        ip link set ${dev} up
+        ;;
+esac

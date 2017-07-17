@@ -12,7 +12,8 @@ mkdir -p /dev/net
 test -c /dev/net/tun || mknod /dev/net/tun c 10 200
 
 option() {
-  sed -n "s/$1 //p" ${CONFIG_FILE} | xargs
+  grep -q "^${1}\s" ${CONFIG_FILE} && \
+    sed -n "s/$1 //p" ${CONFIG_FILE} | xargs
 }
 tolower() {
   tr '[:upper:]' '[:lower:]'
@@ -37,22 +38,24 @@ TUNTAP_TYPE=$(tuntap_type "${conf_dev:0:3}" "${conf_type}")
 
 case "${TUNTAP_TYPE}" in
   tun)
-    if [ -z "${TUN_GATEWAY}" ]; then
-      echo "Error: A gateway must be provided when running in TAP mode"
-      echo "Please specify a gateway with '-e TUN_GATEWAY=192.168.10.1'"
-      exit 3
-    fi
-    # Convert mask to cidr: x.x.x.x x.x.x.x to x.x.x.x/xx
-    SRV_ADDR_MASK="$(option server)"
-    eval $(ipcalc -p $SRV_ADDR_MASK)
-    SRV_NET="$(echo $SRV_ADDR_MASK | cut -d " " -f1)/$PREFIX"
-    UPDOWN_ARGS="${TUN_GATEWAY} ${SRV_NET} ${TUNTAP_ETH}";;
+    #if [ -z "${TUN_GATEWAY}" ]; then
+    #  echo "Error: A gateway must be provided when running in TAP mode"
+    #  echo "Please specify a gateway with '-e TUN_GATEWAY=192.168.10.1'"
+    #  exit 3
+    #fi
+    #OPTIONS="-g ${TUN_GATEWAY}"
+    ;;
 
   tap)
-    UPDOWN_ARGS="${TAP_BRIDGE} ${TUNTAP_ETH}";;
+    OPTIONS="-b ${TAP_BRIDGE}"
+    ;;
 esac
 
-UP_SCRIPT="/usr/local/bin/up-${TUNTAP_TYPE}.sh $UPDOWN_ARGS"
+if [ -n "$TUNTAP_ADDR" ]; then
+  OPTIONS="${OPTIONS} -a '${TUNTAP_ADDR}'"
+fi
+
+UP_SCRIPT="/usr/local/bin/ovpn-up ${OPTIONS} ${TUNTAP_ETH}"
 
 exec openvpn --up "${UP_SCRIPT}" --script-security 2 --config "${CONFIG_FILE}"
 # vim: sw=2 ft=sh
